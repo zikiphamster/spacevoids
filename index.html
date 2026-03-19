@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SpaceVoids</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- MAIN MENU -->
+  <div id="main-menu">
+    <canvas id="menu-bg-canvas"></canvas>
+
+    <div id="menu-container">
+      <div id="title-wrapper">
+        <h1 id="game-title">SPACE<br/>VOIDS</h1>
+        <div id="title-subtitle">a pixel adventure</div>
+      </div>
+
+      <nav id="menu-nav">
+        <button class="menu-btn" id="btn-new-game">NEW GAME</button>
+        <button class="menu-btn" id="btn-load">LOAD GAME</button>
+      </nav>
+
+      <div id="menu-footer">PRESS ENTER OR CLICK TO SELECT</div>
+    </div>
+  </div>
+
+  <!-- GAME SCREEN -->
+  <div id="game-screen" class="hidden">
+    <canvas id="game-canvas"></canvas>
+    <div id="hud">
+      <div id="hud-left">
+        <div class="hud-label">HP</div>
+        <div id="hp-bar-outer"><div id="hp-bar-inner"></div></div>
+      </div>
+      <div id="hud-right">
+        <button id="btn-back-menu">MENU</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOAD DIALOG -->
+  <div id="load-dialog" class="hidden">
+    <div class="dialog-box">
+      <div class="dialog-title">LOAD GAME</div>
+      <div id="save-slots"></div>
+      <button class="menu-btn small" id="btn-load-cancel">CANCEL</button>
+    </div>
+  </div>
+
+  <script src="js/utils.js"></script>
+  <script src="js/menu.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/player.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
