@@ -103,14 +103,18 @@ const Game = (() => {
 
   // Update the orthographic frustum so the camera is centred on (camX, camY).
   // Three.js Y is up; game Y is down — negate Y when converting.
+  // Snap to screen-pixel increments (1/SCALE world units) to eliminate sub-pixel jitter.
   function _applyFrustum() {
     const halfW = window.innerWidth  / (2 * SCALE);
     const halfH = window.innerHeight / (2 * SCALE);
 
-    camera.left   =  camX - halfW;
-    camera.right  =  camX + halfW;
-    camera.top    = -camY + halfH;   // flip Y
-    camera.bottom = -camY - halfH;   // flip Y
+    const sx = Math.round(camX * SCALE) / SCALE;
+    const sy = Math.round(camY * SCALE) / SCALE;
+
+    camera.left   =  sx - halfW;
+    camera.right  =  sx + halfW;
+    camera.top    = -sy + halfH;   // flip Y
+    camera.bottom = -sy - halfH;   // flip Y
     camera.updateProjectionMatrix();
   }
 
