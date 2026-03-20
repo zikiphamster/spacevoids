@@ -31,8 +31,7 @@ const World = (() => {
   // Tiles fill the full TILE_W × TILE_H area seamlessly.
   // The "front face" is drawn as the bottom quarter *within* the tile.
   const DRAW_W  = TILE_W;
-  const DRAW_H  = TILE_H;                      // full tile height
-  const FACE_H  = Math.round(TILE_H * 0.28);   // front-face band inside tile
+  const DRAW_H  = TILE_H;
 
   let mapCols, mapRows, tileMap;
 
@@ -106,30 +105,19 @@ const World = (() => {
 
     const dw = DRAW_W * scale;
     const dh = DRAW_H * scale;
-    const fh = FACE_H * scale;   // front-face band height (inside tile)
 
     // Cull off-screen
     if (sx + dw < 0 || sx > ctx.canvas.width) return;
     if (sy + dh < 0 || sy > ctx.canvas.height) return;
 
-    // ---- top face (upper portion of tile) ----
-    let topColor = def.top;
+    // ---- flat fill — no borders, no face bands ----
+    let color = def.top;
     if (def.anim) {
       const wave = Math.sin(time * 2 + col * 0.7 + row * 0.5) * 0.12;
-      topColor = shiftHex(def.top, wave);
+      color = shiftHex(def.top, wave);
     }
-    ctx.fillStyle = topColor;
-    ctx.fillRect(sx, sy, dw, dh - fh);
-
-    // ---- front face band (bottom portion, same tile rect) ----
-    ctx.fillStyle = def.shadow;
-    ctx.fillRect(sx, sy + dh - fh, dw, fh);
-
-    // ---- subtle top highlight ----
-    ctx.fillStyle = 'rgba(255,255,255,0.07)';
-    ctx.fillRect(sx, sy, dw, 2 * scale);
-    ctx.fillStyle = 'rgba(0,0,0,0.06)';
-    ctx.fillRect(sx, sy, 2 * scale, dh - fh);
+    ctx.fillStyle = color;
+    ctx.fillRect(sx, sy, dw, dh);
 
     // ---- decorations ----
     if (def.deco) drawFlower(ctx, sx, sy, dw, dh, scale, time, col, row);
