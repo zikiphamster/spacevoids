@@ -1,5 +1,5 @@
 // ============================================================
-//  WORLD  — 16×16 pixel-art tiles, Three.js InstancedMesh
+//  WORLD  — single world canvas + Three.js mesh, Stardew-style
 // ============================================================
 
 const World = (() => {
@@ -9,96 +9,45 @@ const World = (() => {
   const TILE_W = 16;
   const TILE_H = 16;
 
-  // Tree sprite world-unit size (taller than one tile to include canopy)
-  const TREE_W = 26;
-  const TREE_H = 32;
+  // Tree sprite world-unit size
+  const TREE_W = 28;
+  const TREE_H = 36;
 
-  // ---- 5-shade palettes: dark → bright [R, G, B] ----
+  // ---- Stardew-inspired palettes: 5 shades dark→bright [R,G,B] ----
   const PAL = {
-    [T.GRASS]:  [[40,74,32],[54,96,42],[66,118,52],[82,142,66],[98,164,80]],
-    [T.DIRT]:   [[88,56,30],[112,76,46],[136,96,60],[158,118,78],[178,140,96]],
-    [T.WATER]:  [[16,48,104],[24,68,144],[34,94,178],[52,126,210],[80,164,238]],
-    [T.STONE]:  [[66,66,80],[86,88,104],[108,110,128],[130,132,152],[154,156,176]],
-    [T.PATH]:   [[108,82,48],[136,106,66],[160,128,82],[184,152,104],[204,174,124]],
+    [T.GRASS]:  [[40,90,18],[56,116,28],[76,148,44],[96,172,60],[120,200,76]],
+    [T.DIRT]:   [[140,100,46],[164,126,64],[190,152,84],[212,174,104],[230,196,124]],
+    [T.WATER]:  [[18,52,112],[28,74,152],[40,102,186],[60,136,218],[88,170,244]],
+    [T.STONE]:  [[72,72,84],[92,94,110],[116,118,136],[140,142,162],[164,166,188]],
+    [T.PATH]:   [[160,128,72],[184,152,92],[206,174,112],[226,196,134],[244,214,154]],
   };
   PAL[T.FLOWER] = PAL[T.GRASS];
   PAL[T.TREE]   = PAL[T.GRASS];
 
+  // Palette index selection per tile type
   function palIdx(n, type) {
     switch (type) {
       case T.GRASS: case T.FLOWER: case T.TREE:
-        if (n < 0.05) return 0; if (n < 0.20) return 1;
-        if (n < 0.64) return 2; if (n < 0.86) return 3; return 4;
+        return n < 0.08 ? 0 : n < 0.24 ? 1 : n < 0.62 ? 2 : n < 0.84 ? 3 : 4;
       case T.DIRT:
-        if (n < 0.06) return 0; if (n < 0.22) return 1;
-        if (n < 0.68) return 2; if (n < 0.88) return 3; return 4;
+        return n < 0.07 ? 0 : n < 0.22 ? 1 : n < 0.66 ? 2 : n < 0.86 ? 3 : 4;
       case T.WATER:
-        if (n < 0.12) return 0; if (n < 0.32) return 1;
-        if (n < 0.65) return 2; if (n < 0.85) return 3; return 4;
+        return n < 0.14 ? 0 : n < 0.34 ? 1 : n < 0.64 ? 2 : n < 0.84 ? 3 : 4;
       case T.STONE:
-        if (n < 0.08) return 0; if (n < 0.26) return 1;
-        if (n < 0.64) return 2; if (n < 0.84) return 3; return 4;
+        return n < 0.09 ? 0 : n < 0.28 ? 1 : n < 0.62 ? 2 : n < 0.82 ? 3 : 4;
       case T.PATH:
-        if (n < 0.05) return 0; if (n < 0.18) return 1;
-        if (n < 0.60) return 2; if (n < 0.82) return 3; return 4;
+        return n < 0.06 ? 0 : n < 0.20 ? 1 : n < 0.58 ? 2 : n < 0.80 ? 3 : 4;
       default: return 2;
     }
   }
 
+  // Per-pixel hash (deterministic pseudo-random)
   function pxHash(a, b, c, d) {
-    const x = Math.sin(a * 127.1 + b * 311.7 + c * 74.7 + d * 531.3) * 43758.5453;
+    const x = Math.sin(a * 127.1 + b * 311.7 + c * 74.7 + (d || 0) * 531.3) * 43758.5453;
     return x - Math.floor(x);
   }
 
   function clampByte(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
-
-  // ---- tile texture cache (plain 2D canvases, 16×16) ----
-  const tileCache   = new Map();
-  const NUM_VARIANTS = 8;
-
-  function getTileCanvas(type, variant) {
-    const key = type * 100 + variant;
-    if (tileCache.has(key)) return tileCache.get(key);
-    const cv  = document.createElement('canvas');
-    cv.width  = TILE_W;
-    cv.height = TILE_H;
-    buildTexture(cv.getContext('2d'), type, variant);
-    tileCache.set(key, cv);
-    return cv;
-  }
-
-  function buildTexture(ctx, type, variant) {
-    const img = ctx.createImageData(TILE_W, TILE_H);
-    const d   = img.data;
-    const pal = PAL[type] || PAL[T.GRASS];
-    for (let py = 0; py < TILE_H; py++) {
-      for (let px = 0; px < TILE_W; px++) {
-        const i  = (py * TILE_W + px) * 4;
-        const n  = pxHash(px, py, variant, type);
-        const ci = palIdx(n, type);
-        let [r, g, b] = pal[ci];
-        const n2 = pxHash(px + 17, py + 31, variant ^ 5, type ^ 3);
-        const v  = Math.round((n2 - 0.5) * 10);
-        d[i]   = clampByte(r + v);
-        d[i+1] = clampByte(g + v);
-        d[i+2] = clampByte(b + v);
-        d[i+3] = 255;
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-    if (type === T.FLOWER) addFlowerDecal(ctx, variant);
-  }
-
-  function addFlowerDecal(ctx, variant) {
-    const cols = ['#f5c842','#e84393','#ff6688','#42d9f5','#ff8c42','#cc66ff'];
-    const fc   = cols[variant % cols.length];
-    const fx   = 3 + (variant % 4) * 3;
-    const fy   = 2 + Math.floor(variant / 4) * 3;
-    ctx.fillStyle = fc;
-    ctx.fillRect(fx, fy, 2, 2);
-    ctx.fillStyle = '#235a23';
-    ctx.fillRect(fx, fy + 2, 1, 3);
-  }
 
   // ---- world generation ----
   let mapCols, mapRows, tileMap;
@@ -112,13 +61,13 @@ const World = (() => {
         if (r < 2 || r >= rows - 2 || c < 2 || c >= cols - 2) {
           t = T.WATER;
         } else {
-          const n = noise(c * 0.18, r * 0.18);
-          if      (n < 0.22) t = T.WATER;
-          else if (n < 0.34) t = T.DIRT;
-          else if (n < 0.50) t = T.STONE;
-          else if (n < 0.68) t = T.GRASS;
-          else if (n < 0.75) t = T.FLOWER;
-          else if (n < 0.82) t = T.PATH;
+          const n = noise(c * 0.16, r * 0.16);
+          if      (n < 0.20) t = T.WATER;
+          else if (n < 0.30) t = T.DIRT;
+          else if (n < 0.46) t = T.STONE;
+          else if (n < 0.64) t = T.GRASS;
+          else if (n < 0.72) t = T.FLOWER;
+          else if (n < 0.80) t = T.PATH;
           else               t = T.TREE;
         }
         tileMap[r][c] = t;
@@ -141,8 +90,7 @@ const World = (() => {
 
   function lerp(a, b, t) { return a + (b - a) * t; }
 
-  // ---- Three.js scene building ----
-  // Track every Three.js object we create so we can dispose them properly.
+  // ---- Three.js state ----
   const createdObjects = [];
   let waterMesh = null, waterTex = null, waterCanvas = null, waterCtx = null;
 
@@ -158,71 +106,205 @@ const World = (() => {
     waterMesh = waterTex = waterCanvas = waterCtx = null;
   }
 
+  // ---- scene building ----
   function buildScene(scene) {
     disposeAll();
 
-    // Group tile positions by (groundType, variant) for InstancedMesh batching.
-    // TREE tiles: render GRASS underneath + add to treePos for sprite layer.
-    const groups  = new Map(); // key → Array<{c, r}>
+    const worldW = mapCols * TILE_W;
+    const worldH = mapRows * TILE_H;
+
+    // Separate water and tree positions
     const waterPos = [];
     const treePos  = [];
 
     for (let r = 0; r < mapRows; r++) {
       for (let c = 0; c < mapCols; c++) {
         const type = tileMap[r][c];
-
-        if (type === T.WATER) { waterPos.push({ c, r }); continue; }
-
-        // For TREE: render as GRASS with its own per-tile grass variant
-        const gType    = type === T.TREE ? T.GRASS : type;
-        const gVariant = Math.floor(pxHash(c, r, gType, 99) * NUM_VARIANTS);
-        const key      = gType * 100 + gVariant;
-
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push({ c, r });
-
-        if (type === T.TREE) treePos.push({ c, r });
+        if (type === T.WATER) waterPos.push({ c, r });
+        if (type === T.TREE)  treePos.push({ c, r });
       }
     }
 
-    const dummy = new THREE.Object3D();
+    // ---- Single world canvas (all non-water ground tiles) ----
+    const worldCanvas        = document.createElement('canvas');
+    worldCanvas.width  = worldW;
+    worldCanvas.height = worldH;
+    const worldCtx = worldCanvas.getContext('2d');
 
-    // ---- static ground tiles (one InstancedMesh per type+variant group) ----
-    for (const [key, tiles] of groups) {
-      const gType    = Math.floor(key / 100);
-      const gVariant = key % 100;
+    // Pass 1: Base pixel colors for every tile
+    _paintBaseLayer(worldCtx);
 
-      const cv  = getTileCanvas(gType, gVariant);
-      const tex = new THREE.CanvasTexture(cv);
-      tex.magFilter = THREE.NearestFilter;
-      tex.minFilter = THREE.NearestFilter;
+    // Pass 2: Terrain edge transitions (grass fringe over dirt/path)
+    _paintTransitions(worldCtx);
 
-      const mat  = new THREE.MeshBasicMaterial({ map: tex });
-      const mesh = new THREE.InstancedMesh(
-        new THREE.PlaneGeometry(TILE_W, TILE_H), mat, tiles.length
-      );
-      mesh.frustumCulled = false;
-      mesh.renderOrder   = 0;
+    // Pass 3: Flower decorations
+    _paintFlowers(worldCtx);
 
-      tiles.forEach(({ c, r }, i) => {
-        // Three.js Y is up; game Y is down → negate
-        dummy.position.set(c * TILE_W + TILE_W / 2, -(r * TILE_H + TILE_H / 2), 0);
-        dummy.updateMatrix();
-        mesh.setMatrixAt(i, dummy.matrix);
-      });
-      mesh.instanceMatrix.needsUpdate = true;
-      scene.add(mesh);
-      createdObjects.push(mesh);
-    }
+    const worldTex = new THREE.CanvasTexture(worldCanvas);
+    worldTex.magFilter = THREE.NearestFilter;
+    worldTex.minFilter = THREE.NearestFilter;
 
-    // ---- water (animated shared texture) ----
-    _buildWaterMesh(scene, waterPos, dummy);
+    const worldMat  = new THREE.MeshBasicMaterial({ map: worldTex });
+    const worldMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(worldW, worldH),
+      worldMat
+    );
+    // Center the plane on the world: world coords go 0→worldW (x), 0→worldH (y down)
+    // Three.js Y is up, so center = (worldW/2, -worldH/2, 0)
+    worldMesh.position.set(worldW / 2, -worldH / 2, 0);
+    worldMesh.renderOrder = 0;
+    scene.add(worldMesh);
+    createdObjects.push(worldMesh);
 
-    // ---- tree sprites (layer above ground) ----
-    _buildTreeMesh(scene, treePos, dummy);
+    // ---- Animated water ----
+    _buildWaterMesh(scene, waterPos);
+
+    // ---- Tree canopy sprites ----
+    _buildTreeMesh(scene, treePos);
   }
 
-  function _buildWaterMesh(scene, tiles, dummy) {
+  // ---- Pass 1: Base layer ----
+  function _paintBaseLayer(ctx) {
+    const imgData = ctx.createImageData(mapCols * TILE_W, mapRows * TILE_H);
+    const d = imgData.data;
+
+    for (let r = 0; r < mapRows; r++) {
+      for (let c = 0; c < mapCols; c++) {
+        const type = tileMap[r][c];
+        // Water gets painted as deep-water placeholder (overwritten by animated water mesh)
+        const drawType = (type === T.WATER) ? T.WATER : (type === T.TREE ? T.GRASS : type);
+        const pal = PAL[drawType] || PAL[T.GRASS];
+
+        for (let py = 0; py < TILE_H; py++) {
+          for (let px = 0; px < TILE_W; px++) {
+            const wx = c * TILE_W + px;
+            const wy = r * TILE_H + py;
+            const i  = (wy * mapCols * TILE_W + wx) * 4;
+
+            // Smooth (medium-scale) noise for terrain cluster feeling
+            const ns = smoothNoise(c + px / TILE_W, r + py / TILE_H, 0.35);
+            // Fine hash noise for pixel micro-variation
+            const nf = pxHash(px, py, c * 17 + r * 31, drawType);
+            // Blend: 60% smooth + 40% fine
+            const n = ns * 0.6 + nf * 0.4;
+
+            const ci = palIdx(n, drawType);
+            let [rv, gv, bv] = pal[ci];
+
+            // Tiny per-pixel brightness jitter for organic look
+            const jitter = Math.round((pxHash(px + 7, py + 3, c, r) - 0.5) * 8);
+            d[i]   = clampByte(rv + jitter);
+            d[i+1] = clampByte(gv + jitter);
+            d[i+2] = clampByte(bv + jitter);
+            d[i+3] = 255;
+          }
+        }
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+  }
+
+  // Smooth value noise at arbitrary fractional tile coords
+  function smoothNoise(x, y, scale) {
+    const sx = x * scale, sy = y * scale;
+    const ix = Math.floor(sx), iy = Math.floor(sy);
+    const fx = sx - ix, fy = sy - iy;
+    const a = hash(ix, iy), b = hash(ix + 1, iy);
+    const c2 = hash(ix, iy + 1), d2 = hash(ix + 1, iy + 1);
+    const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+    return lerp(lerp(a, b, u), lerp(c2, d2, u), v);
+  }
+
+  // ---- Pass 2: Terrain transitions ----
+  // Paints small grass fringe pixels at the edge of grass tiles bordering dirt/path.
+  function _paintTransitions(ctx) {
+    const grassPal = PAL[T.GRASS];
+    const darkGrass = `rgb(${grassPal[1][0]},${grassPal[1][1]},${grassPal[1][2]})`;
+    const midGrass  = `rgb(${grassPal[2][0]},${grassPal[2][1]},${grassPal[2][2]})`;
+
+    for (let r = 0; r < mapRows; r++) {
+      for (let c = 0; c < mapCols; c++) {
+        const type = tileMap[r][c];
+        if (type === T.WATER || type === T.GRASS || type === T.FLOWER || type === T.TREE) continue;
+
+        // For dirt/path/stone tiles — check if a grass tile is directly above or to the left
+        const above = r > 0 ? tileMap[r - 1][c] : null;
+        const left  = c > 0 ? tileMap[r][c - 1] : null;
+        const below = r < mapRows - 1 ? tileMap[r + 1][c] : null;
+        const right = c < mapCols - 1 ? tileMap[r][c + 1] : null;
+
+        const isGrassy = t => t === T.GRASS || t === T.FLOWER || t === T.TREE;
+
+        const tx = c * TILE_W;
+        const ty = r * TILE_H;
+
+        // Top edge: grass above → paint fringe pixels at top of this tile
+        if (isGrassy(above)) {
+          ctx.fillStyle = midGrass;
+          for (let px = 1; px < TILE_W - 1; px++) {
+            if (pxHash(px, r, c, 1) > 0.38) {
+              ctx.fillRect(tx + px, ty, 1, 1);
+            }
+          }
+          ctx.fillStyle = darkGrass;
+          for (let px = 1; px < TILE_W - 1; px++) {
+            if (pxHash(px, r, c, 2) > 0.55) {
+              ctx.fillRect(tx + px, ty + 1, 1, 1);
+            }
+          }
+        }
+
+        // Left edge: grass to the left → fringe on left side
+        if (isGrassy(left)) {
+          ctx.fillStyle = midGrass;
+          for (let py = 1; py < TILE_H - 1; py++) {
+            if (pxHash(c, py, r, 3) > 0.38) {
+              ctx.fillRect(tx, ty + py, 1, 1);
+            }
+          }
+          ctx.fillStyle = darkGrass;
+          for (let py = 1; py < TILE_H - 1; py++) {
+            if (pxHash(c, py, r, 4) > 0.55) {
+              ctx.fillRect(tx + 1, ty + py, 1, 1);
+            }
+          }
+        }
+
+        // Bottom edge shadow: grass below this tile → dark strip at tile bottom
+        if (isGrassy(below)) {
+          ctx.fillStyle = 'rgba(0,0,0,0.18)';
+          ctx.fillRect(tx, ty + TILE_H - 2, TILE_W, 2);
+        }
+
+        // Right edge shadow: grass to the right
+        if (isGrassy(right)) {
+          ctx.fillStyle = 'rgba(0,0,0,0.18)';
+          ctx.fillRect(tx + TILE_W - 2, ty, 2, TILE_H);
+        }
+      }
+    }
+  }
+
+  // ---- Pass 3: Flower decorations ----
+  function _paintFlowers(ctx) {
+    const cols = ['#f5c842','#e84393','#ff6688','#42d9f5','#ff8c42','#cc66ff'];
+    for (let r = 0; r < mapRows; r++) {
+      for (let c = 0; c < mapCols; c++) {
+        if (tileMap[r][c] !== T.FLOWER) continue;
+        const variant = Math.floor(pxHash(c, r, 77, 3) * 6);
+        const fx = c * TILE_W + 3 + Math.floor(pxHash(c, r, 11, 1) * 8);
+        const fy = r * TILE_H + 2 + Math.floor(pxHash(c, r, 13, 2) * 7);
+        ctx.fillStyle = cols[variant];
+        ctx.fillRect(fx, fy, 2, 2);
+        ctx.fillStyle = '#1e5c1e';
+        ctx.fillRect(fx, fy + 2, 1, 3);
+      }
+    }
+  }
+
+  // ---- Animated water ----
+  function _buildWaterMesh(scene, tiles) {
     if (!tiles.length) return;
 
     waterCanvas        = document.createElement('canvas');
@@ -242,8 +324,9 @@ const World = (() => {
     waterMesh.frustumCulled = false;
     waterMesh.renderOrder   = 0;
 
+    const dummy = new THREE.Object3D();
     tiles.forEach(({ c, r }, i) => {
-      dummy.position.set(c * TILE_W + TILE_W / 2, -(r * TILE_H + TILE_H / 2), 0);
+      dummy.position.set(c * TILE_W + TILE_W / 2, -(r * TILE_H + TILE_H / 2), 0.001);
       dummy.updateMatrix();
       waterMesh.setMatrixAt(i, dummy.matrix);
     });
@@ -258,17 +341,21 @@ const World = (() => {
     ctx.fillStyle = `rgb(${w[2][0]},${w[2][1]},${w[2][2]})`;
     ctx.fillRect(0, 0, TILE_W, TILE_H);
 
-    // Animated shimmer lines moving upward (in tile-space pixels/sec)
+    // Animated shimmer lines
     const spacing = Math.ceil(TILE_H * 0.38);
     const offset  = (time * 3) % spacing;
-    ctx.fillStyle = `rgba(${w[4][0]},${w[4][1]},${w[4][2]},0.32)`;
+    ctx.fillStyle = `rgba(${w[4][0]},${w[4][1]},${w[4][2]},0.30)`;
     for (let ly = -spacing + offset; ly < TILE_H + spacing; ly += spacing) {
       ctx.fillRect(1, Math.floor(ly), TILE_W - 2, 1);
     }
 
     // Deep-water tint at bottom
-    ctx.fillStyle = `rgba(${w[0][0]},${w[0][1]},${w[0][2]},0.28)`;
-    ctx.fillRect(0, Math.round(TILE_H * 0.75), TILE_W, Math.round(TILE_H * 0.25));
+    ctx.fillStyle = `rgba(${w[0][0]},${w[0][1]},${w[0][2]},0.25)`;
+    ctx.fillRect(0, Math.round(TILE_H * 0.72), TILE_W, Math.round(TILE_H * 0.28));
+
+    // Soft foam highlight at top
+    ctx.fillStyle = `rgba(${w[3][0]},${w[3][1]},${w[3][2]},0.20)`;
+    ctx.fillRect(2, 0, TILE_W - 4, 2);
   }
 
   function updateWater(time) {
@@ -277,32 +364,17 @@ const World = (() => {
     waterTex.needsUpdate = true;
   }
 
-  function _buildTreeMesh(scene, tiles, dummy) {
+  // ---- Round tree canopy sprites ----
+  function _buildTreeMesh(scene, tiles) {
     if (!tiles.length) return;
 
-    // Draw the tree sprite onto a TREE_W × TREE_H canvas (transparent bg)
-    const cv  = document.createElement('canvas');
+    const cv       = document.createElement('canvas');
     cv.width  = TREE_W;
     cv.height = TREE_H;
     const ctx = cv.getContext('2d');
     ctx.clearRect(0, 0, TREE_W, TREE_H);
 
-    // Trunk (bottom center)
-    ctx.fillStyle = '#4a2808';
-    ctx.fillRect(11, 23, 4, 9);
-
-    // Canopy — 3 stacked layers, darkest at bottom
-    ctx.fillStyle = '#1c4820';
-    ctx.fillRect(4,  15, 18, 12);
-    ctx.fillStyle = '#2a6e30';
-    ctx.fillRect(2,  8,  22, 12);
-    ctx.fillStyle = '#3a9040';
-    ctx.fillRect(5,  2,  16, 10);
-
-    // Bright highlight pixels at top
-    ctx.fillStyle = '#50b456';
-    ctx.fillRect(9,  0, 3, 2);
-    ctx.fillRect(15, 1, 3, 2);
+    _drawTreeSprite(ctx);
 
     const tex = new THREE.CanvasTexture(cv);
     tex.magFilter = THREE.NearestFilter;
@@ -315,21 +387,89 @@ const World = (() => {
     mesh.frustumCulled = false;
     mesh.renderOrder   = 1;
 
-    // Position so the sprite's bottom aligns with the tile's bottom edge.
-    // tileCenter.y = -(r * TILE_H + TILE_H / 2)
-    // tileBottom   = tileCenter.y - TILE_H / 2
-    // treeCenter.y = tileBottom + TREE_H / 2 = tileCenter.y + (TREE_H - TILE_H) / 2
+    const dummy   = new THREE.Object3D();
     const offsetY = (TREE_H - TILE_H) / 2;
 
     tiles.forEach(({ c, r }, i) => {
       const ty = -(r * TILE_H + TILE_H / 2);
-      dummy.position.set(c * TILE_W + TILE_W / 2, ty + offsetY, 0.001);
+      dummy.position.set(c * TILE_W + TILE_W / 2, ty + offsetY, 0.002);
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
     });
     mesh.instanceMatrix.needsUpdate = true;
     scene.add(mesh);
     createdObjects.push(mesh);
+  }
+
+  function _drawTreeSprite(ctx) {
+    const cw = TREE_W, ch = TREE_H;
+
+    // Trunk
+    ctx.fillStyle = '#5a3010';
+    ctx.fillRect(Math.floor(cw * 0.39), Math.floor(ch * 0.70), Math.floor(cw * 0.22), Math.floor(ch * 0.30));
+    // Trunk highlight
+    ctx.fillStyle = '#7a4820';
+    ctx.fillRect(Math.floor(cw * 0.39), Math.floor(ch * 0.70), 2, Math.floor(ch * 0.30));
+
+    // Round canopy — draw pixel by pixel using circle equation
+    const cx = cw / 2;
+    const cy = ch * 0.40;
+    const radius = cw * 0.44;
+
+    // Canopy shading layers (5 shades of green, N=bright, S=dark)
+    const canopyShades = [
+      '#1e4a1a',  // darkest (south/shadow)
+      '#286428',
+      '#349640',
+      '#46b84e',
+      '#5cd468',  // brightest (north/highlight)
+    ];
+
+    // Use ImageData for per-pixel drawing
+    const imgData = ctx.createImageData(cw, ch);
+    const d = imgData.data;
+
+    for (let py = 0; py < ch; py++) {
+      for (let px = 0; px < cw; px++) {
+        const dx = px - cx;
+        const dy = py - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        // Ragged edge via hash
+        const edgeHash = pxHash(px, py, 7, 3);
+        const r = radius + (edgeHash - 0.5) * 3.5;
+
+        if (dist > r) continue;
+
+        // Y-based shade: top = bright (index 4), bottom = dark (index 0)
+        const yFrac = (py - (cy - radius)) / (radius * 2);  // 0=top, 1=bottom
+        // Add slight radial falloff to make edges darker
+        const radialFrac = dist / radius;
+        const shadeFrac = yFrac * 0.6 + radialFrac * 0.4;
+        // Invert: bright at top (yFrac≈0 → high index), dark at bottom
+        const shadeIdx = Math.max(0, 4 - Math.floor(shadeFrac * 5));
+
+        const hex = canopyShades[shadeIdx];
+        const rv = parseInt(hex.slice(1, 3), 16);
+        const gv = parseInt(hex.slice(3, 5), 16);
+        const bv = parseInt(hex.slice(5, 7), 16);
+
+        // Micro jitter
+        const jitter = Math.round((pxHash(px + 3, py + 9, 5, 2) - 0.5) * 10);
+
+        const i = (py * cw + px) * 4;
+        d[i]   = clampByte(rv + jitter);
+        d[i+1] = clampByte(gv + jitter);
+        d[i+2] = clampByte(bv + jitter);
+        d[i+3] = 255;
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    // Bright highlight cluster at top of canopy
+    ctx.fillStyle = 'rgba(160,240,120,0.45)';
+    ctx.fillRect(Math.floor(cx - 3), Math.floor(cy - radius + 2), 4, 2);
+    ctx.fillRect(Math.floor(cx + 1), Math.floor(cy - radius + 3), 2, 2);
   }
 
   // ---- public API ----
