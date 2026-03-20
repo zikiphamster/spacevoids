@@ -1,120 +1,145 @@
 // ============================================================
-//  PLAYER  — movement, sprite, input
+//  PLAYER  — movement, Three.js canvas-texture sprite
 // ============================================================
 
 const Player = (() => {
-  const SPEED   = 50;   // pixels/sec in world space (~3 tiles/sec at 16px tiles)
-  const SIZE_W  = 10;   // sprite width  (world pixels)
-  const SIZE_H  = 14;   // sprite height (world pixels)
+  const SPEED      = 50;    // world pixels / sec
+  const SIZE_W     = 10;    // sprite logical width  (world units)
+  const SIZE_H     = 14;    // sprite logical height (world units)
+  const SPR_SCALE  = 2;     // canvas draw scale → 20×28 px canvas
+  const SPR_W      = SIZE_W * SPR_SCALE;
+  const SPR_H      = SIZE_H * SPR_SCALE;
 
-  let x, y;             // world position (tile-space, decimal)
+  let x, y;
   let vx = 0, vy = 0;
-  let facing = 'down';  // 'up' | 'down' | 'left' | 'right'
-  let frame  = 0;       // walk frame 0..3
-  let frameTimer = 0;
-  const FRAME_RATE = 0.14; // seconds per frame
+  let facing = 'down';
+  let frame  = 0, frameTimer = 0;
+  const FRAME_RATE = 0.14;
 
   const keys = {};
 
-  function init(startCol, startRow) {
+  // Three.js objects
+  let sprCanvas, sprCtx, sprTex, mesh;
+
+  function init(scene, startCol, startRow) {
     x = startCol * World.TILE_W + World.TILE_W / 2;
     y = startRow * World.TILE_H + World.TILE_H / 2;
     vx = vy = 0;
     frame = 0;
     frameTimer = 0;
+
     window.addEventListener('keydown', e => { keys[e.key] = true;  });
     window.addEventListener('keyup',   e => { keys[e.key] = false; });
+
+    // Dispose old mesh if reinitialising
+    if (mesh) {
+      if (mesh.parent) mesh.parent.remove(mesh);
+      mesh.geometry.dispose();
+      if (mesh.material.map) mesh.material.map.dispose();
+      mesh.material.dispose();
+      mesh = null;
+    }
+
+    // Sprite canvas (drawn at SPR_SCALE for crispness, displayed at SIZE_W×SIZE_H world units)
+    sprCanvas        = document.createElement('canvas');
+    sprCanvas.width  = SPR_W;
+    sprCanvas.height = SPR_H;
+    sprCtx           = sprCanvas.getContext('2d');
+
+    sprTex           = new THREE.CanvasTexture(sprCanvas);
+    sprTex.magFilter = THREE.NearestFilter;
+    sprTex.minFilter = THREE.NearestFilter;
+
+    const geo = new THREE.PlaneGeometry(SIZE_W, SIZE_H);
+    const mat = new THREE.MeshBasicMaterial({ map: sprTex, transparent: true, alphaTest: 0.05 });
+    mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = 2;
+    scene.add(mesh);
+
+    updateMesh();
   }
 
   function update(dt) {
-    vx = 0;
-    vy = 0;
+    vx = 0; vy = 0;
 
     if (keys['ArrowLeft']  || keys['a'] || keys['A']) { vx = -SPEED; facing = 'left';  }
     if (keys['ArrowRight'] || keys['d'] || keys['D']) { vx =  SPEED; facing = 'right'; }
     if (keys['ArrowUp']    || keys['w'] || keys['W']) { vy = -SPEED; facing = 'up';    }
     if (keys['ArrowDown']  || keys['s'] || keys['S']) { vy =  SPEED; facing = 'down';  }
 
-    // Normalize diagonal
-    if (vx !== 0 && vy !== 0) {
-      vx *= 0.7071;
-      vy *= 0.7071;
-    }
+    if (vx !== 0 && vy !== 0) { vx *= 0.7071; vy *= 0.7071; }
 
     const nx = x + vx * dt;
     const ny = y + vy * dt;
 
-    // Collision: don't walk into water or trees
-    const col = Math.floor(nx / World.TILE_W);
-    const row = Math.floor(ny / World.TILE_H);
+    const col  = Math.floor(nx / World.TILE_W);
+    const row  = Math.floor(ny / World.TILE_H);
     const tile = World.tileAt(col, row);
-    const blocked = tile === World.T.WATER || tile === undefined;
 
-    if (!blocked) {
-      x = nx;
-      y = ny;
-    }
+    if (tile !== World.T.WATER && tile !== undefined) { x = nx; y = ny; }
 
-    // Walk animation
     if (vx !== 0 || vy !== 0) {
       frameTimer += dt;
-      if (frameTimer >= FRAME_RATE) {
-        frameTimer -= FRAME_RATE;
-        frame = (frame + 1) % 4;
-      }
-    } else {
-      frame = 0;
-      frameTimer = 0;
-    }
+      if (frameTimer >= FRAME_RATE) { frameTimer -= FRAME_RATE; frame = (frame + 1) % 4; }
+    } else { frame = 0; frameTimer = 0; }
   }
 
-  // Draw a simple pixel character
-  function draw(ctx, camX, camY, scale) {
-    const sx = Math.round(x * scale - camX - (SIZE_W * scale) / 2);
-    const sy = Math.round(y * scale - camY - (SIZE_H * scale) / 2);
+  // Called every frame from the game loop — redraws sprite + syncs mesh position
+  function updateMesh() {
+    if (!mesh) return;
+    _drawSprite();
+    sprTex.needsUpdate = true;
+    // Three.js Y is up; game Y is down → negate Y
+    mesh.position.set(x, -y, 0.002);
+  }
 
-    const w = SIZE_W * scale;
-    const h = SIZE_H * scale;
+  function _drawSprite() {
+    const ctx = sprCtx;
+    const s   = SPR_SCALE;
+    const w   = SIZE_W * s;
+    const h   = SIZE_H * s;
+
+    ctx.clearRect(0, 0, SPR_W, SPR_H);
 
     // Shadow
     ctx.fillStyle = 'rgba(0,0,0,0.28)';
-    ctx.fillRect(sx + w * 0.1, sy + h * 0.9, w * 0.8, h * 0.12);
+    ctx.fillRect(w * 0.1, h * 0.9, w * 0.8, h * 0.12);
 
     // Body (tunic)
     ctx.fillStyle = '#3a6fd8';
-    ctx.fillRect(sx + w * 0.2, sy + h * 0.4, w * 0.6, h * 0.42);
+    ctx.fillRect(w * 0.2, h * 0.4, w * 0.6, h * 0.42);
 
-    // Legs — alternate per frame
-    const legOff = (frame === 1 || frame === 3) ? 1 : 0;
+    // Legs — alternate per walk frame
+    const lo = (frame === 1 || frame === 3) ? s : 0;
     ctx.fillStyle = '#2a2a3d';
-    ctx.fillRect(sx + w * 0.2, sy + h * 0.78, w * 0.28, h * 0.22 - legOff * scale);
-    ctx.fillRect(sx + w * 0.52, sy + h * 0.78, w * 0.28, h * 0.22 + legOff * scale);
+    ctx.fillRect(w * 0.2,  h * 0.78, w * 0.28, h * 0.22 - lo);
+    ctx.fillRect(w * 0.52, h * 0.78, w * 0.28, h * 0.22 + lo);
 
     // Head
     ctx.fillStyle = '#f0c890';
-    ctx.fillRect(sx + w * 0.2, sy, w * 0.6, h * 0.42);
+    ctx.fillRect(w * 0.2, 0, w * 0.6, h * 0.42);
 
     // Eyes
     ctx.fillStyle = '#1a1a2e';
-    if (facing === 'down' || facing === 'right' || facing === 'left') {
-      ctx.fillRect(sx + w * 0.28, sy + h * 0.18, w * 0.12, h * 0.12);
-      ctx.fillRect(sx + w * 0.56, sy + h * 0.18, w * 0.12, h * 0.12);
+    if (facing !== 'up') {
+      ctx.fillRect(w * 0.28, h * 0.18, w * 0.12, h * 0.12);
+      ctx.fillRect(w * 0.56, h * 0.18, w * 0.12, h * 0.12);
     }
 
     // Hair
     ctx.fillStyle = '#8b4513';
-    ctx.fillRect(sx + w * 0.18, sy, w * 0.64, h * 0.12);
+    ctx.fillRect(w * 0.18, 0, w * 0.64, h * 0.12);
 
     // Arms
     ctx.fillStyle = '#3a6fd8';
-    ctx.fillRect(sx,           sy + h * 0.42, w * 0.2, h * 0.3);
-    ctx.fillRect(sx + w * 0.8, sy + h * 0.42, w * 0.2, h * 0.3);
+    ctx.fillRect(0,      h * 0.42, w * 0.2, h * 0.3);
+    ctx.fillRect(w * 0.8, h * 0.42, w * 0.2, h * 0.3);
   }
 
   return {
     init,
     update,
-    draw,
+    updateMesh,
     get worldX() { return x; },
     get worldY() { return y; },
   };
