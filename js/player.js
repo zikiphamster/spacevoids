@@ -3,7 +3,7 @@
 // ============================================================
 
 const Player = (() => {
-  const SPEED   = 80;   // pixels/sec in world space
+  const SPEED   = 50;   // pixels/sec in world space (~3 tiles/sec at 16px tiles)
   const SIZE_W  = 10;   // sprite width  (world pixels)
   const SIZE_H  = 14;   // sprite height (world pixels)
 

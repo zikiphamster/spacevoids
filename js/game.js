@@ -4,9 +4,9 @@
 
 const Game = (() => {
   // ---- config ----
-  const MAP_COLS  = 40;
-  const MAP_ROWS  = 40;
-  const SCALE     = 2;   // pixel scale multiplier
+  const MAP_COLS  = 50;
+  const MAP_ROWS  = 50;
+  const SCALE     = 4;   // pixel scale multiplier (16px tiles × 4 = 64px on screen)
   const CAM_EASE  = 6;   // camera smoothing factor
 
   // ---- state ----
