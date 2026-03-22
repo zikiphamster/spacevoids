@@ -9,8 +9,12 @@ const World = (() => {
   const TILE_W = 16;
   const TILE_H = 16;
 
-  const TREE_W = 28;
-  const TREE_H = 36;
+  const TRUNK_W = 20;
+  const TRUNK_H = 16;
+  const CANOPY_W = 32;
+  const CANOPY_H = 32;
+  let treeCanopies = [];  // { mesh, worldY } for depth sorting
+  let canopyMaterial = null;
 
   // ---- Stardew-inspired palettes: 5 shades dark→bright [R,G,B] ----
   const PAL = {
@@ -159,6 +163,40 @@ const World = (() => {
     }
   `;
 
+  // ---- Tree canopy shader (wind sway + translucency) ----
+  const CANOPY_VERT = `
+    uniform float uTime;
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      vec3 pos = position;
+      // Wind sway: top of canopy sways more than bottom
+      float swayAmount = uv.y * 0.8;
+      pos.x += sin(uTime * 1.5 + position.y * 0.3) * swayAmount;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+    }
+  `;
+
+  const CANOPY_FRAG = `
+    uniform sampler2D uCanopyTex;
+    uniform float uTime;
+    uniform float uAlpha;
+
+    varying vec2 vUv;
+
+    void main() {
+      vec4 texColor = texture2D(uCanopyTex, vUv);
+      if (texColor.a < 0.1) discard;
+
+      // Subtle leaf shimmer
+      float shimmer = sin(vUv.x * 30.0 + vUv.y * 20.0 + uTime * 2.0) * 0.04;
+      texColor.rgb += shimmer;
+
+      texColor.a *= uAlpha;
+      gl_FragColor = texColor;
+    }
+  `;
+
   function disposeAll() {
     createdObjects.forEach(obj => {
       if (obj.geometry) obj.geometry.dispose();
@@ -175,6 +213,8 @@ const World = (() => {
     });
     createdObjects.length = 0;
     waterMaterial = null;
+    canopyMaterial = null;
+    treeCanopies = [];
   }
 
   // ---- scene building ----
@@ -270,8 +310,8 @@ const World = (() => {
     scene.add(waterMesh);
     createdObjects.push(waterMesh);
 
-    // ---- Tree canopy sprites ----
-    _buildTreeMesh(scene, treePos);
+    // ---- Trees (trunk + canopy with depth sorting) ----
+    _buildTrees(scene, treePos);
   }
 
   // ---- Embedded grass tiles (RGB, base64) ----
@@ -503,98 +543,182 @@ const World = (() => {
     if (waterMaterial) waterMaterial.uniforms.uTime.value = time;
   }
 
-  // ---- Tree canopy sprites ----
-  function _buildTreeMesh(scene, tiles) {
+  // ---- Tree building ----
+  function _buildTrees(scene, tiles) {
     if (!tiles.length) return;
+    treeCanopies = [];
 
-    const cv       = document.createElement('canvas');
-    cv.width  = TREE_W;
-    cv.height = TREE_H;
-    const ctx = cv.getContext('2d');
-    ctx.clearRect(0, 0, TREE_W, TREE_H);
-    _drawTreeSprite(ctx);
+    // ---- Trunk texture ----
+    const trunkCv = document.createElement('canvas');
+    trunkCv.width = TRUNK_W; trunkCv.height = TRUNK_H;
+    const trunkCtx = trunkCv.getContext('2d');
+    _drawTrunk(trunkCtx);
+    const trunkTex = new THREE.CanvasTexture(trunkCv);
+    trunkTex.magFilter = THREE.NearestFilter;
+    trunkTex.minFilter = THREE.NearestFilter;
 
-    const tex = new THREE.CanvasTexture(cv);
-    tex.magFilter = THREE.NearestFilter;
-    tex.minFilter = THREE.NearestFilter;
-
-    const mat  = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.05 });
-    const mesh = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(TREE_W, TREE_H), mat, tiles.length
+    // Trunk: InstancedMesh (always behind player)
+    const trunkMat = new THREE.MeshBasicMaterial({ map: trunkTex, transparent: true, alphaTest: 0.05 });
+    const trunkMesh = new THREE.InstancedMesh(
+      new THREE.PlaneGeometry(TRUNK_W, TRUNK_H), trunkMat, tiles.length
     );
-    mesh.frustumCulled = false;
-    mesh.renderOrder   = 1;
-
-    const dummy   = new THREE.Object3D();
-    const offsetY = (TREE_H - TILE_H) / 2;
+    trunkMesh.frustumCulled = false;
+    trunkMesh.renderOrder = 0.6;
+    const dummy = new THREE.Object3D();
 
     tiles.forEach(({ c, r }, i) => {
-      const ty = -(r * TILE_H + TILE_H / 2);
-      dummy.position.set(c * TILE_W + TILE_W / 2, ty + offsetY, 0.002);
+      const worldY = r * TILE_H + TILE_H / 2;
+      dummy.position.set(c * TILE_W + TILE_W / 2, -worldY - 6, 0.002);
       dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
+      trunkMesh.setMatrixAt(i, dummy.matrix);
     });
-    mesh.instanceMatrix.needsUpdate = true;
-    scene.add(mesh);
-    createdObjects.push(mesh);
+    trunkMesh.instanceMatrix.needsUpdate = true;
+    scene.add(trunkMesh);
+    createdObjects.push(trunkMesh);
+
+    // ---- Canopy texture ----
+    const canopyCv = document.createElement('canvas');
+    canopyCv.width = CANOPY_W; canopyCv.height = CANOPY_H;
+    const canopyCtx = canopyCv.getContext('2d');
+    _drawCanopy(canopyCtx);
+    const canopyTex = new THREE.CanvasTexture(canopyCv);
+    canopyTex.magFilter = THREE.NearestFilter;
+    canopyTex.minFilter = THREE.NearestFilter;
+
+    // Shared canopy ShaderMaterial (cloned per tree for individual uAlpha)
+    const canopyGeo = new THREE.PlaneGeometry(CANOPY_W, CANOPY_H);
+
+    tiles.forEach(({ c, r }) => {
+      const worldY = r * TILE_H + TILE_H / 2;
+      const mat = new THREE.ShaderMaterial({
+        uniforms: {
+          uCanopyTex: { value: canopyTex },
+          uTime:      { value: 0.0 },
+          uAlpha:     { value: 1.0 },
+        },
+        vertexShader:   CANOPY_VERT,
+        fragmentShader: CANOPY_FRAG,
+        transparent: true,
+        depthWrite: false,
+      });
+      const mesh = new THREE.Mesh(canopyGeo, mat);
+      mesh.position.set(
+        c * TILE_W + TILE_W / 2,
+        -worldY + 10,  // canopy above trunk
+        0.003
+      );
+      mesh.renderOrder = 1;
+      scene.add(mesh);
+      createdObjects.push(mesh);
+      treeCanopies.push({ mesh, worldY, col: c });
+    });
   }
 
-  function _drawTreeSprite(ctx) {
-    const cw = TREE_W, ch = TREE_H;
+  function updateTrees(playerY, playerX, gameTime) {
+    for (let i = 0; i < treeCanopies.length; i++) {
+      const tc = treeCanopies[i];
+      const mat = tc.mesh.material;
+      mat.uniforms.uTime.value = gameTime;
 
-    // Trunk
+      // Depth sorting
+      if (playerY < tc.worldY) {
+        // Player above tree → canopy in front, make translucent if overlapping
+        tc.mesh.renderOrder = 3;
+        const dx = Math.abs(playerX - (tc.col * TILE_W + TILE_W / 2));
+        const dy = tc.worldY - playerY;
+        if (dx < CANOPY_W / 2 && dy < CANOPY_H / 2) {
+          mat.uniforms.uAlpha.value = 0.4; // translucent when player behind
+        } else {
+          mat.uniforms.uAlpha.value = 1.0;
+        }
+      } else {
+        // Player below tree → canopy behind player
+        tc.mesh.renderOrder = 1;
+        mat.uniforms.uAlpha.value = 1.0;
+      }
+    }
+  }
+
+  function _drawTrunk(ctx) {
+    const w = TRUNK_W, h = TRUNK_H;
+    ctx.clearRect(0, 0, w, h);
+
+    const cx = Math.floor(w / 2);
+    // Main trunk (wider, 8px)
     ctx.fillStyle = '#5a3010';
-    ctx.fillRect(Math.floor(cw * 0.39), Math.floor(ch * 0.70), Math.floor(cw * 0.22), Math.floor(ch * 0.30));
+    ctx.fillRect(cx - 4, 0, 8, h);
+
+    // Bark highlight (left)
     ctx.fillStyle = '#7a4820';
-    ctx.fillRect(Math.floor(cw * 0.39), Math.floor(ch * 0.70), 2, Math.floor(ch * 0.30));
+    ctx.fillRect(cx - 4, 0, 2, h);
 
-    // Round canopy via per-pixel circle with Y-based shading
-    const cx = cw / 2;
-    const cy = ch * 0.40;
-    const radius = cw * 0.44;
+    // Bark shadow (right)
+    ctx.fillStyle = '#3e2008';
+    ctx.fillRect(cx + 2, 0, 2, h);
 
-    const canopyShades = [
-      '#1e4a1a', '#286428', '#349640', '#46b84e', '#5cd468',
+    // Bark detail knots
+    ctx.fillStyle = '#4a2810';
+    ctx.fillRect(cx - 2, 3, 3, 2);
+    ctx.fillRect(cx - 1, 8, 4, 1);
+    ctx.fillRect(cx - 2, 12, 2, 2);
+
+    // Root flare
+    ctx.fillStyle = '#5a3010';
+    ctx.fillRect(cx - 5, h - 3, 2, 3);
+    ctx.fillRect(cx + 4, h - 3, 2, 3);
+    ctx.fillStyle = '#4a2810';
+    ctx.fillRect(cx - 6, h - 2, 1, 2);
+    ctx.fillRect(cx + 6, h - 2, 1, 2);
+  }
+
+  function _drawCanopy(ctx) {
+    const w = CANOPY_W, h = CANOPY_H;
+    ctx.clearRect(0, 0, w, h);
+
+    const imgData = ctx.createImageData(w, h);
+    const d = imgData.data;
+    const cx = w / 2;
+    const cy = h * 0.45;
+    const rx = w * 0.46;
+    const ry = h * 0.44;
+
+    const shades = [
+      [20, 50, 18],   // deep shadow
+      [30, 75, 26],   // dark green
+      [45, 110, 38],  // mid green
+      [65, 145, 50],  // bright green
+      [85, 175, 65],  // light green
+      [110, 195, 80], // highlight
     ];
 
-    const imgData = ctx.createImageData(cw, ch);
-    const d = imgData.data;
+    for (let py = 0; py < h; py++) {
+      for (let px = 0; px < w; px++) {
+        const dx = (px - cx) / rx;
+        const dy = (py - cy) / ry;
+        const dist = dx * dx + dy * dy;
 
-    for (let py = 0; py < ch; py++) {
-      for (let px = 0; px < cw; px++) {
-        const dx = px - cx;
-        const dy = py - cy;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+        // Jagged organic edge
+        const edgeNoise = (pxHash(px, py, 7, 3) - 0.5) * 0.3;
+        if (dist > 1.0 + edgeNoise) continue;
 
-        const edgeHash = pxHash(px, py, 7, 3);
-        const r = radius + (edgeHash - 0.5) * 3.5;
-        if (dist > r) continue;
+        // Shading: light from top-left
+        const lightFrac = (-dx * 0.3 - dy * 0.5 + 0.5);
+        const noiseFrac = pxHash(px, py, 11, 5) * 0.3;
+        const shade = lightFrac * 0.6 + noiseFrac + (1 - dist) * 0.2;
 
-        const yFrac     = (py - (cy - radius)) / (radius * 2);
-        const radialFrac = dist / radius;
-        const shadeFrac  = yFrac * 0.6 + radialFrac * 0.4;
-        const shadeIdx   = Math.max(0, 4 - Math.floor(shadeFrac * 5));
+        let si = Math.floor(shade * 5);
+        si = Math.max(0, Math.min(5, si));
+        const col = shades[si];
 
-        const hex = canopyShades[shadeIdx];
-        const rv = parseInt(hex.slice(1, 3), 16);
-        const gv = parseInt(hex.slice(3, 5), 16);
-        const bv = parseInt(hex.slice(5, 7), 16);
-
-        const jitter = Math.round((pxHash(px + 3, py + 9, 5, 2) - 0.5) * 10);
-
-        const idx = (py * cw + px) * 4;
-        d[idx]   = clampByte(rv + jitter);
-        d[idx+1] = clampByte(gv + jitter);
-        d[idx+2] = clampByte(bv + jitter);
+        const jitter = Math.round((pxHash(px + 3, py + 7, 5, 9) - 0.5) * 10);
+        const idx = (py * w + px) * 4;
+        d[idx]   = clampByte(col[0] + jitter);
+        d[idx+1] = clampByte(col[1] + jitter);
+        d[idx+2] = clampByte(col[2] + jitter);
         d[idx+3] = 255;
       }
     }
     ctx.putImageData(imgData, 0, 0);
-
-    // Highlight at top
-    ctx.fillStyle = 'rgba(160,240,120,0.45)';
-    ctx.fillRect(Math.floor(cx - 3), Math.floor(cy - radius + 2), 4, 2);
-    ctx.fillRect(Math.floor(cx + 1), Math.floor(cy - radius + 3), 2, 2);
   }
 
   // ---- public API ----
@@ -606,6 +730,7 @@ const World = (() => {
     buildScene,
     disposeAll,
     updateWater,
+    updateTrees,
     tileAt: (col, row) => tileMap[row]?.[col],
     cols:   () => mapCols,
     rows:   () => mapRows,

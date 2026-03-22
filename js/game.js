@@ -135,6 +135,7 @@ const Game = (() => {
     Player.update(dt);
     updateCamera(dt);
     World.updateWater(gameTime);
+    World.updateTrees(Player.worldY, Player.worldX, gameTime);
     Player.updateMesh();
 
     renderer.render(scene, camera);
