@@ -51,7 +51,7 @@ const Player = (() => {
     sprTex.minFilter = THREE.NearestFilter;
 
     const geo = new THREE.PlaneGeometry(SIZE_W, SIZE_H);
-    const mat = new THREE.MeshBasicMaterial({ map: sprTex, transparent: true, alphaTest: 0.05 });
+    const mat = new THREE.MeshBasicMaterial({ map: sprTex, transparent: true, alphaTest: 0.05, depthWrite: false, depthTest: false });
     mesh = new THREE.Mesh(geo, mat);
     mesh.renderOrder = 2;
     scene.add(mesh);
@@ -69,14 +69,35 @@ const Player = (() => {
 
     if (vx !== 0 && vy !== 0) { vx *= 0.7071; vy *= 0.7071; }
 
+    // Hitbox at player's feet only (bottom quarter of sprite)
+    const HBW = SIZE_W * 0.4;   // half-width (slightly narrower than sprite)
+    const HBH = SIZE_H * 0.2;   // half-height (short — just feet)
+    const HB_OFFSET = SIZE_H * 0.3; // offset downward from center to feet
+
+    function blocked(px, py) {
+      const feetY = py + HB_OFFSET; // shift hitbox to feet
+      const corners = [
+        [px - HBW, feetY - HBH],
+        [px + HBW, feetY - HBH],
+        [px - HBW, feetY + HBH],
+        [px + HBW, feetY + HBH],
+      ];
+      for (const [cx, cy] of corners) {
+        const c = Math.floor(cx / World.TILE_W);
+        const r = Math.floor(cy / World.TILE_H);
+        const t = World.tileAt(c, r);
+        if (t === World.T.WATER || t === undefined) return true;
+      }
+      // Check against tree trunk colliders (bottom half only)
+      if (World.isTreeBlocked(px, feetY, HBW, HBH)) return true;
+      return false;
+    }
+
+    // Try X and Y separately for wall-sliding
     const nx = x + vx * dt;
     const ny = y + vy * dt;
-
-    const col  = Math.floor(nx / World.TILE_W);
-    const row  = Math.floor(ny / World.TILE_H);
-    const tile = World.tileAt(col, row);
-
-    if (tile !== World.T.WATER && tile !== World.T.TREE && tile !== undefined) { x = nx; y = ny; }
+    if (!blocked(nx, y))       x = nx;
+    if (!blocked(x,  ny))      y = ny;
 
     if (vx !== 0 || vy !== 0) {
       frameTimer += dt;

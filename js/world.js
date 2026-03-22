@@ -14,6 +14,7 @@ const World = (() => {
   const CANOPY_W = 44;
   const CANOPY_H = 44;
   let treeCanopies = [];  // { mesh, worldY } for depth sorting
+  let treeColliders = []; // { x, y, hw, hh } — bottom-half trunk hitboxes in world coords
   let canopyMaterial = null;
 
   // ---- Stardew-inspired palettes: 5 shades dark→bright [R,G,B] ----
@@ -577,6 +578,7 @@ const World = (() => {
   function _buildTrees(scene, tiles) {
     if (!tiles.length) return;
     treeCanopies = [];
+    treeColliders = [];
 
     // ---- Trunk texture ----
     const trunkCv = document.createElement('canvas');
@@ -603,18 +605,19 @@ const World = (() => {
       const worldY = r * TILE_H + TILE_H / 2;
       const treeX = c * TILE_W + TILE_W / 2;
 
-      // Individual trunk mesh (needs per-tree opacity)
+      // Trunk mesh — depthWrite off so renderOrder controls draw order
       const tMat = new THREE.MeshBasicMaterial({
         map: trunkTex, transparent: true, alphaTest: 0.05, opacity: 1.0,
+        depthWrite: false, depthTest: false,
       });
       const tMesh = new THREE.Mesh(trunkGeo, tMat);
-      const trunkY = -worldY + 2 - TRUNK_H / 2 + 6;
-      tMesh.position.set(treeX, trunkY, 0.001);
-      tMesh.renderOrder = 0.6;
+      const trunkY = -worldY + 2 - TRUNK_H / 2 + 10;
+      tMesh.position.set(treeX, trunkY, 0);
+      tMesh.renderOrder = 1;
       scene.add(tMesh);
       createdObjects.push(tMesh);
 
-      // Individual canopy mesh with shader
+      // Canopy mesh — depthWrite off, renderOrder controls draw order
       const cMat = new THREE.ShaderMaterial({
         uniforms: {
           uCanopyTex: { value: canopyTex },
@@ -625,16 +628,28 @@ const World = (() => {
         fragmentShader: CANOPY_FRAG,
         transparent: true,
         depthWrite: false,
+        depthTest: false,
       });
       const cMesh = new THREE.Mesh(canopyGeo, cMat);
-      cMesh.position.set(treeX, -worldY + CANOPY_H / 2 + 2, 0.003);
+      cMesh.position.set(treeX, -worldY + CANOPY_H / 2 + 2, 0);
       cMesh.renderOrder = 1;
       scene.add(cMesh);
       createdObjects.push(cMesh);
 
+      // Trunk collision
+      const trunkCenterY = worldY + 2;
+      const colliderCenterY = trunkCenterY + TRUNK_H * 0.25;
+      const colliderHH = TRUNK_H * 0.25;
+
       treeCanopies.push({
         canopy: cMesh, trunk: tMesh,
         worldY, col: c, targetAlpha: 1.0, currentAlpha: 1.0,
+      });
+      treeColliders.push({
+        x: treeX,
+        y: colliderCenterY,
+        hw: TRUNK_W * 0.5,
+        hh: colliderHH,
       });
     });
   }
@@ -648,20 +663,27 @@ const World = (() => {
       const cMat = tc.canopy.material;
       cMat.uniforms.uTime.value = gameTime;
 
-      // Determine target alpha
+      // Use player's feet Y for depth comparison (player center + half height)
+      const playerFeetY = playerY + 7; // SIZE_H/2 = 7
       const treeX = tc.col * TILE_W + TILE_W / 2;
       const dx = Math.abs(playerX - treeX);
-      const dy = tc.worldY - playerY;
 
-      if (playerY < tc.worldY && dx < CANOPY_W * 0.6 && dy < CANOPY_H * 0.7 && dy > 0) {
-        // Player is behind tree — fade to translucent
+      // Default: player in front (renderOrder 2 > 1). Only put tree in front
+      // when player's feet are above the tree tile center (walking behind it)
+      if (playerFeetY < tc.worldY) {
+        // Player above tree → tree in front, fade if overlapping
         tc.canopy.renderOrder = 3;
-        tc.trunk.renderOrder = 2.5;
-        tc.targetAlpha = 0.35;
+        tc.trunk.renderOrder = 3;
+        const dy = tc.worldY - playerFeetY;
+        if (dx < CANOPY_W * 0.6 && dy < CANOPY_H * 0.7) {
+          tc.targetAlpha = 0.35;
+        } else {
+          tc.targetAlpha = 1.0;
+        }
       } else {
-        // Normal — fully opaque
-        tc.canopy.renderOrder = playerY < tc.worldY ? 3 : 1;
-        tc.trunk.renderOrder = 0.6;
+        // Player's feet below tree base → tree renders behind player
+        tc.canopy.renderOrder = 1;
+        tc.trunk.renderOrder = 1;
         tc.targetAlpha = 1.0;
       }
 
@@ -676,6 +698,17 @@ const World = (() => {
       cMat.uniforms.uAlpha.value = tc.currentAlpha;
       tc.trunk.material.opacity = tc.currentAlpha;
     }
+  }
+
+  // Check if a point+hitbox overlaps any tree trunk collider (bottom half)
+  function isTreeBlocked(px, py, hw, hh) {
+    for (let i = 0; i < treeColliders.length; i++) {
+      const tc = treeColliders[i];
+      if (Math.abs(px - tc.x) < hw + tc.hw && Math.abs(py - tc.y) < hh + tc.hh) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function _drawTrunk(ctx) {
@@ -874,6 +907,7 @@ const World = (() => {
     disposeAll,
     updateWater,
     updateTrees,
+    isTreeBlocked,
     tileAt: (col, row) => tileMap[row]?.[col],
     cols:   () => mapCols,
     rows:   () => mapRows,
