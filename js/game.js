@@ -95,8 +95,8 @@ const Game = (() => {
     targetCamX = Utils.clamp(Player.worldX, halfW, worldW - halfW);
     targetCamY = Utils.clamp(Player.worldY, halfH, worldH - halfH);
 
-    camX += (targetCamX - camX) * Math.min(1, CAM_EASE * dt);
-    camY += (targetCamY - camY) * Math.min(1, CAM_EASE * dt);
+    camX = targetCamX;
+    camY = targetCamY;
 
     _applyFrustum();
   }

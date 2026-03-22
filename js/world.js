@@ -274,7 +274,7 @@ const World = (() => {
 
     const groundMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(worldW, worldH),
-      new THREE.MeshBasicMaterial({ map: groundTex })
+      new THREE.MeshBasicMaterial({ map: groundTex, depthWrite: false })
     );
     groundMesh.position.set(worldW / 2, -worldH / 2, 0);
     groundMesh.renderOrder = 0;
@@ -608,11 +608,11 @@ const World = (() => {
       // Trunk mesh — depthWrite off so renderOrder controls draw order
       const tMat = new THREE.MeshBasicMaterial({
         map: trunkTex, transparent: true, alphaTest: 0.05, opacity: 1.0,
-        depthWrite: false, depthTest: false,
+        depthWrite: false,
       });
       const tMesh = new THREE.Mesh(trunkGeo, tMat);
       const trunkY = -worldY + 2 - TRUNK_H / 2 + 10;
-      tMesh.position.set(treeX, trunkY, 0);
+      tMesh.position.set(treeX, trunkY, 0.003);
       tMesh.renderOrder = 1;
       scene.add(tMesh);
       createdObjects.push(tMesh);
@@ -628,10 +628,9 @@ const World = (() => {
         fragmentShader: CANOPY_FRAG,
         transparent: true,
         depthWrite: false,
-        depthTest: false,
       });
       const cMesh = new THREE.Mesh(canopyGeo, cMat);
-      cMesh.position.set(treeX, -worldY + CANOPY_H / 2 + 2, 0);
+      cMesh.position.set(treeX, -worldY + CANOPY_H / 2 + 2, 0.004);
       cMesh.renderOrder = 1;
       scene.add(cMesh);
       createdObjects.push(cMesh);

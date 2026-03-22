@@ -51,7 +51,7 @@ const Player = (() => {
     sprTex.minFilter = THREE.NearestFilter;
 
     const geo = new THREE.PlaneGeometry(SIZE_W, SIZE_H);
-    const mat = new THREE.MeshBasicMaterial({ map: sprTex, transparent: true, alphaTest: 0.05, depthWrite: false, depthTest: false });
+    const mat = new THREE.MeshBasicMaterial({ map: sprTex, transparent: true, alphaTest: 0.05, depthWrite: false });
     mesh = new THREE.Mesh(geo, mat);
     mesh.renderOrder = 2;
     scene.add(mesh);
@@ -110,8 +110,10 @@ const Player = (() => {
     if (!mesh) return;
     _drawSprite();
     sprTex.needsUpdate = true;
-    // Three.js Y is up; game Y is down → negate Y
-    mesh.position.set(x, -y, 0.002);
+    // Snap to pixel grid (SCALE=4 → 0.25 world units) to prevent sub-pixel jitter
+    const sx = Math.round(x * 4) / 4;
+    const sy = Math.round(y * 4) / 4;
+    mesh.position.set(sx, -sy, 0.002);
   }
 
   function _drawSprite() {
