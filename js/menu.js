@@ -1,98 +1,156 @@
 // ============================================================
-//  MENU  — animated background + button logic
+//  MENU  — animated background: stars + rotating pixel planet
 // ============================================================
 
 const Menu = (() => {
-  // ---- background canvas particles & stars ----
-  const STAR_COUNT   = 120;
-  const PIXEL_COUNT  = 40;
+  const STAR_COUNT = 150;
 
   let bgCanvas, bgCtx;
-  let stars   = [];
-  let pixels  = [];
-  let rafId   = null;
-  let time    = 0;
+  let stars  = [];
+  let rafId  = null;
+  let time   = 0;
 
-  // Floating pixel "dust" for atmosphere
+  // ---- hash for procedural planet texture ----
+  function hash(a, b) {
+    const n = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+    return n - Math.floor(n);
+  }
+
+  function noise2d(x, y) {
+    const ix = Math.floor(x), iy = Math.floor(y);
+    const fx = x - ix, fy = y - iy;
+    const ux = fx * fx * (3 - 2 * fx);
+    const uy = fy * fy * (3 - 2 * fy);
+    const a = hash(ix, iy), b = hash(ix + 1, iy);
+    const c = hash(ix, iy + 1), d = hash(ix + 1, iy + 1);
+    return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+  }
+
+  function fbm(x, y) {
+    return noise2d(x, y) * 0.5 +
+           noise2d(x * 2.1, y * 2.1) * 0.3 +
+           noise2d(x * 4.3, y * 4.3) * 0.2;
+  }
+
+  // ---- stars ----
   function initParticles(w, h) {
     stars = Array.from({ length: STAR_COUNT }, () => ({
       x: Math.random() * w,
       y: Math.random() * h,
       r: Utils.randInt(1, 2),
-      speed: Math.random() * 0.3 + 0.05,
-      alpha: Math.random() * 0.7 + 0.3,
-      twinkle: Math.random() * Math.PI * 2,
-    }));
-
-    pixels = Array.from({ length: PIXEL_COUNT }, () => ({
-      x: Math.random() * w,
-      y: Math.random() * h,
-      size: Utils.randInt(2, 5),
-      color: ['#f5c842', '#e84393', '#42d9f5', '#a66cff'][Utils.randInt(0, 3)],
-      vy: -(Math.random() * 0.4 + 0.1),
-      alpha: Math.random(),
+      blinkSpeed: Math.random() * 1.5 + 0.3,
+      blinkOffset: Math.random() * Math.PI * 2,
     }));
   }
 
-  function drawBg(w, h) {
-    bgCtx.clearRect(0, 0, w, h);
+  // ---- planet palettes ----
+  const LAND_COLORS = [
+    [126, 200, 80],   // light green
+    [168, 216, 72],   // yellow-green
+    [200, 232, 120],  // pale green
+    [100, 170, 60],   // darker green
+    [80, 145, 50],    // deep green
+  ];
+  const OCEAN_COLORS = [
+    [40, 80, 50],     // dark green-blue
+    [50, 95, 60],     // muted green
+    [35, 70, 45],     // deep dark
+  ];
+  const HIGHLIGHT_COLORS = [
+    [216, 208, 64],   // yellow
+    [232, 224, 104],  // pale yellow
+    [240, 230, 140],  // light yellow
+  ];
 
-    // Sky gradient
-    const grad = bgCtx.createLinearGradient(0, 0, 0, h);
-    grad.addColorStop(0,   '#050510');
-    grad.addColorStop(0.5, '#0d0d1a');
-    grad.addColorStop(1,   '#0a1a14');
-    bgCtx.fillStyle = grad;
+  // ---- planet config ----
+  const PLANET_RADIUS = 60;
+  const PIXEL_SIZE    = 3;
+
+  function drawPlanet(cx, cy) {
+    const r = PLANET_RADIUS;
+    // Rotation: shift longitude over time (clockwise = negative direction)
+    const rot = -time * 0.15;
+
+    for (let py = -r; py <= r; py += PIXEL_SIZE) {
+      for (let px = -r; px <= r; px += PIXEL_SIZE) {
+        const dist = Math.sqrt(px * px + py * py);
+        if (dist > r) continue;
+
+        // Map pixel to sphere coordinates
+        const nx = px / r;
+        const ny = py / r;
+        const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+
+        // Convert to longitude/latitude for texture
+        const lon = Math.atan2(nx, nz) + rot;
+        const lat = Math.asin(ny);
+
+        // Sample procedural texture
+        const texX = lon * 2.5;
+        const texY = lat * 2.5;
+        const n = fbm(texX, texY);
+
+        let col;
+        if (n < 0.35) {
+          // Ocean
+          const ci = Math.floor(hash(Math.floor(texX * 3), Math.floor(texY * 3)) * OCEAN_COLORS.length);
+          col = OCEAN_COLORS[Math.min(ci, OCEAN_COLORS.length - 1)];
+        } else if (n > 0.7) {
+          // Highlights (mountain/desert)
+          const ci = Math.floor(hash(Math.floor(texX * 4), Math.floor(texY * 4)) * HIGHLIGHT_COLORS.length);
+          col = HIGHLIGHT_COLORS[Math.min(ci, HIGHLIGHT_COLORS.length - 1)];
+        } else {
+          // Land
+          const ci = Math.floor(hash(Math.floor(texX * 3), Math.floor(texY * 3)) * LAND_COLORS.length);
+          col = LAND_COLORS[Math.min(ci, LAND_COLORS.length - 1)];
+        }
+
+        // Lighting: simple diffuse from top-right
+        const light = Math.max(0.3, nz * 0.6 + nx * 0.2 + 0.4);
+        const lr = Math.floor(col[0] * light);
+        const lg = Math.floor(col[1] * light);
+        const lb = Math.floor(col[2] * light);
+
+        // Edge darkening (atmosphere rim)
+        const edge = 1 - Math.pow(dist / r, 3);
+        const fr = Math.floor(lr * edge);
+        const fg = Math.floor(lg * edge);
+        const fb = Math.floor(lb * edge);
+
+        bgCtx.fillStyle = `rgb(${fr},${fg},${fb})`;
+        bgCtx.fillRect(cx + px, cy + py, PIXEL_SIZE, PIXEL_SIZE);
+      }
+    }
+
+    // Atmosphere glow
+    const gradient = bgCtx.createRadialGradient(cx, cy, r - 2, cx, cy, r + 12);
+    gradient.addColorStop(0, 'rgba(120,220,100,0.0)');
+    gradient.addColorStop(0.5, 'rgba(120,220,100,0.08)');
+    gradient.addColorStop(1, 'rgba(120,220,100,0.0)');
+    bgCtx.fillStyle = gradient;
+    bgCtx.beginPath();
+    bgCtx.arc(cx, cy, r + 12, 0, Math.PI * 2);
+    bgCtx.fill();
+  }
+
+  function drawBg(w, h) {
+    // Solid black background
+    bgCtx.fillStyle = '#000';
     bgCtx.fillRect(0, 0, w, h);
 
-    // Stars
+    // Blinking stars
     stars.forEach(s => {
-      const a = s.alpha * (0.6 + 0.4 * Math.sin(s.twinkle + time * 0.8));
-      bgCtx.fillStyle = `rgba(255,255,240,${a})`;
-      bgCtx.fillRect(Math.round(s.x), Math.round(s.y), s.r, s.r);
-      s.twinkle += 0.02;
+      const blink = Math.sin(time * s.blinkSpeed + s.blinkOffset);
+      // Blink fully out when sin < -0.3
+      const a = Math.max(0, (blink + 0.3) / 1.3);
+      if (a > 0.01) {
+        bgCtx.fillStyle = `rgba(255,255,240,${a.toFixed(2)})`;
+        bgCtx.fillRect(Math.round(s.x), Math.round(s.y), s.r, s.r);
+      }
     });
 
-    // Ground plane — oblique perspective hint
-    const horizon = h * 0.62;
-    const groundGrad = bgCtx.createLinearGradient(0, horizon, 0, h);
-    groundGrad.addColorStop(0, 'rgba(20,45,30,0.0)');
-    groundGrad.addColorStop(1, 'rgba(20,45,30,0.85)');
-    bgCtx.fillStyle = groundGrad;
-    bgCtx.fillRect(0, horizon, w, h - horizon);
-
-    // Pixel grid lines on ground (perspective lines)
-    bgCtx.strokeStyle = 'rgba(66,217,100,0.07)';
-    bgCtx.lineWidth = 1;
-    const COLS = 14;
-    const vp = { x: w / 2, y: horizon };
-    for (let i = 0; i <= COLS; i++) {
-      const bx = (w / COLS) * i;
-      bgCtx.beginPath();
-      bgCtx.moveTo(vp.x, vp.y);
-      bgCtx.lineTo(bx, h);
-      bgCtx.stroke();
-    }
-    const ROWS = 8;
-    for (let r = 1; r <= ROWS; r++) {
-      const t   = r / ROWS;
-      const y   = horizon + (h - horizon) * t;
-      const xOff = (1 - t) * (w * 0.45);
-      bgCtx.beginPath();
-      bgCtx.moveTo(xOff, y);
-      bgCtx.lineTo(w - xOff, y);
-      bgCtx.stroke();
-    }
-
-    // Floating pixel dust
-    pixels.forEach(p => {
-      bgCtx.globalAlpha = p.alpha * (0.5 + 0.5 * Math.sin(time + p.x));
-      bgCtx.fillStyle = p.color;
-      bgCtx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size);
-      p.y += p.vy;
-      if (p.y < -p.size) p.y = h + p.size;
-      bgCtx.globalAlpha = 1;
-    });
+    // Rotating pixel planet in center
+    drawPlanet(Math.floor(w / 2), Math.floor(h / 2));
   }
 
   function animateBg() {

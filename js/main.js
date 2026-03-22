@@ -77,9 +77,25 @@
     Menu.show();
   });
 
+  // ---- VERSION / CHANGELOG ----
+  const versionLabel    = document.getElementById('version-label');
+  const changelogPopup  = document.getElementById('changelog-popup');
+  const btnChangelogClose = document.getElementById('btn-changelog-close');
+
+  versionLabel.addEventListener('click', () => {
+    changelogPopup.classList.remove('hidden');
+  });
+  btnChangelogClose.addEventListener('click', () => {
+    changelogPopup.classList.add('hidden');
+  });
+
   // ---- ESC key ----
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
+      if (!changelogPopup.classList.contains('hidden')) {
+        changelogPopup.classList.add('hidden');
+        return;
+      }
       if (!loadDialog.classList.contains('hidden')) {
         loadDialog.classList.add('hidden');
         return;
