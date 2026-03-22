@@ -9,10 +9,10 @@ const World = (() => {
   const TILE_W = 16;
   const TILE_H = 16;
 
-  const TRUNK_W = 20;
-  const TRUNK_H = 16;
-  const CANOPY_W = 32;
-  const CANOPY_H = 32;
+  const TRUNK_W = 24;
+  const TRUNK_H = 28;
+  const CANOPY_W = 44;
+  const CANOPY_H = 44;
   let treeCanopies = [];  // { mesh, worldY } for depth sorting
   let canopyMaterial = null;
 
@@ -587,25 +587,6 @@ const World = (() => {
     trunkTex.magFilter = THREE.NearestFilter;
     trunkTex.minFilter = THREE.NearestFilter;
 
-    // Trunk: InstancedMesh (always behind player)
-    const trunkMat = new THREE.MeshBasicMaterial({ map: trunkTex, transparent: true, alphaTest: 0.05 });
-    const trunkMesh = new THREE.InstancedMesh(
-      new THREE.PlaneGeometry(TRUNK_W, TRUNK_H), trunkMat, tiles.length
-    );
-    trunkMesh.frustumCulled = false;
-    trunkMesh.renderOrder = 0.6;
-    const dummy = new THREE.Object3D();
-
-    tiles.forEach(({ c, r }, i) => {
-      const worldY = r * TILE_H + TILE_H / 2;
-      dummy.position.set(c * TILE_W + TILE_W / 2, -worldY - 6, 0.002);
-      dummy.updateMatrix();
-      trunkMesh.setMatrixAt(i, dummy.matrix);
-    });
-    trunkMesh.instanceMatrix.needsUpdate = true;
-    scene.add(trunkMesh);
-    createdObjects.push(trunkMesh);
-
     // ---- Canopy texture ----
     const canopyCv = document.createElement('canvas');
     canopyCv.width = CANOPY_W; canopyCv.height = CANOPY_H;
@@ -615,12 +596,26 @@ const World = (() => {
     canopyTex.magFilter = THREE.NearestFilter;
     canopyTex.minFilter = THREE.NearestFilter;
 
-    // Shared canopy ShaderMaterial (cloned per tree for individual uAlpha)
+    const trunkGeo = new THREE.PlaneGeometry(TRUNK_W, TRUNK_H);
     const canopyGeo = new THREE.PlaneGeometry(CANOPY_W, CANOPY_H);
 
     tiles.forEach(({ c, r }) => {
       const worldY = r * TILE_H + TILE_H / 2;
-      const mat = new THREE.ShaderMaterial({
+      const treeX = c * TILE_W + TILE_W / 2;
+
+      // Individual trunk mesh (needs per-tree opacity)
+      const tMat = new THREE.MeshBasicMaterial({
+        map: trunkTex, transparent: true, alphaTest: 0.05, opacity: 1.0,
+      });
+      const tMesh = new THREE.Mesh(trunkGeo, tMat);
+      const trunkY = -worldY + 2 - TRUNK_H / 2 + 6;
+      tMesh.position.set(treeX, trunkY, 0.001);
+      tMesh.renderOrder = 0.6;
+      scene.add(tMesh);
+      createdObjects.push(tMesh);
+
+      // Individual canopy mesh with shader
+      const cMat = new THREE.ShaderMaterial({
         uniforms: {
           uCanopyTex: { value: canopyTex },
           uTime:      { value: 0.0 },
@@ -631,41 +626,55 @@ const World = (() => {
         transparent: true,
         depthWrite: false,
       });
-      const mesh = new THREE.Mesh(canopyGeo, mat);
-      mesh.position.set(
-        c * TILE_W + TILE_W / 2,
-        -worldY + 10,  // canopy above trunk
-        0.003
-      );
-      mesh.renderOrder = 1;
-      scene.add(mesh);
-      createdObjects.push(mesh);
-      treeCanopies.push({ mesh, worldY, col: c });
+      const cMesh = new THREE.Mesh(canopyGeo, cMat);
+      cMesh.position.set(treeX, -worldY + CANOPY_H / 2 + 2, 0.003);
+      cMesh.renderOrder = 1;
+      scene.add(cMesh);
+      createdObjects.push(cMesh);
+
+      treeCanopies.push({
+        canopy: cMesh, trunk: tMesh,
+        worldY, col: c, targetAlpha: 1.0, currentAlpha: 1.0,
+      });
     });
   }
 
   function updateTrees(playerY, playerX, gameTime) {
+    const FADE_SPEED = 3.0; // per second — smooth fade
+    const dt = 0.016; // approximate frame dt
+
     for (let i = 0; i < treeCanopies.length; i++) {
       const tc = treeCanopies[i];
-      const mat = tc.mesh.material;
-      mat.uniforms.uTime.value = gameTime;
+      const cMat = tc.canopy.material;
+      cMat.uniforms.uTime.value = gameTime;
 
-      // Depth sorting
-      if (playerY < tc.worldY) {
-        // Player above tree → canopy in front, make translucent if overlapping
-        tc.mesh.renderOrder = 3;
-        const dx = Math.abs(playerX - (tc.col * TILE_W + TILE_W / 2));
-        const dy = tc.worldY - playerY;
-        if (dx < CANOPY_W / 2 && dy < CANOPY_H / 2) {
-          mat.uniforms.uAlpha.value = 0.4; // translucent when player behind
-        } else {
-          mat.uniforms.uAlpha.value = 1.0;
-        }
+      // Determine target alpha
+      const treeX = tc.col * TILE_W + TILE_W / 2;
+      const dx = Math.abs(playerX - treeX);
+      const dy = tc.worldY - playerY;
+
+      if (playerY < tc.worldY && dx < CANOPY_W * 0.6 && dy < CANOPY_H * 0.7 && dy > 0) {
+        // Player is behind tree — fade to translucent
+        tc.canopy.renderOrder = 3;
+        tc.trunk.renderOrder = 2.5;
+        tc.targetAlpha = 0.35;
       } else {
-        // Player below tree → canopy behind player
-        tc.mesh.renderOrder = 1;
-        mat.uniforms.uAlpha.value = 1.0;
+        // Normal — fully opaque
+        tc.canopy.renderOrder = playerY < tc.worldY ? 3 : 1;
+        tc.trunk.renderOrder = 0.6;
+        tc.targetAlpha = 1.0;
       }
+
+      // Smooth lerp toward target
+      if (tc.currentAlpha < tc.targetAlpha) {
+        tc.currentAlpha = Math.min(tc.targetAlpha, tc.currentAlpha + FADE_SPEED * dt);
+      } else if (tc.currentAlpha > tc.targetAlpha) {
+        tc.currentAlpha = Math.max(tc.targetAlpha, tc.currentAlpha - FADE_SPEED * dt);
+      }
+
+      // Apply to both canopy and trunk
+      cMat.uniforms.uAlpha.value = tc.currentAlpha;
+      tc.trunk.material.opacity = tc.currentAlpha;
     }
   }
 
@@ -673,32 +682,97 @@ const World = (() => {
     const w = TRUNK_W, h = TRUNK_H;
     ctx.clearRect(0, 0, w, h);
 
-    const cx = Math.floor(w / 2);
-    // Main trunk (wider, 8px)
-    ctx.fillStyle = '#5a3010';
-    ctx.fillRect(cx - 4, 0, 8, h);
+    const imgData = ctx.createImageData(w, h);
+    const d = imgData.data;
+    const cx = w / 2;
 
-    // Bark highlight (left)
-    ctx.fillStyle = '#7a4820';
-    ctx.fillRect(cx - 4, 0, 2, h);
+    // Bark colour palette: dark shadow → highlight
+    const bark = [
+      [42, 24, 10],   // deep shadow
+      [56, 34, 16],   // dark bark
+      [72, 46, 22],   // mid bark
+      [88, 58, 30],   // light bark
+      [105, 72, 38],  // highlight
+      [62, 40, 18],   // knot colour
+    ];
 
-    // Bark shadow (right)
-    ctx.fillStyle = '#3e2008';
-    ctx.fillRect(cx + 2, 0, 2, h);
+    for (let py = 0; py < h; py++) {
+      // Trunk width — tapers up, widens into root flare at bottom
+      const topW = 4;
+      const midW = 5;
+      const rootW = 8;
+      const t = py / h;
+      let halfW;
+      if (t < 0.7) {
+        halfW = topW + (midW - topW) * (t / 0.7);
+      } else {
+        halfW = midW + (rootW - midW) * ((t - 0.7) / 0.3);
+      }
 
-    // Bark detail knots
-    ctx.fillStyle = '#4a2810';
-    ctx.fillRect(cx - 2, 3, 3, 2);
-    ctx.fillRect(cx - 1, 8, 4, 1);
-    ctx.fillRect(cx - 2, 12, 2, 2);
+      for (let px = 0; px < w; px++) {
+        const dx = px - cx;
+        if (Math.abs(dx) > halfW) continue;
 
-    // Root flare
-    ctx.fillStyle = '#5a3010';
-    ctx.fillRect(cx - 5, h - 3, 2, 3);
-    ctx.fillRect(cx + 4, h - 3, 2, 3);
-    ctx.fillStyle = '#4a2810';
-    ctx.fillRect(cx - 6, h - 2, 1, 2);
-    ctx.fillRect(cx + 6, h - 2, 1, 2);
+        // Horizontal shading: light on left, dark on right
+        const lr = (dx + halfW) / (halfW * 2); // 0=left, 1=right
+        // Vertical bark line noise
+        const barkNoise = pxHash(px, py, 3, 7) * 0.4;
+        const shade = (1 - lr) * 0.5 + barkNoise + 0.1;
+
+        let si = Math.floor(shade * 4);
+        si = Math.max(0, Math.min(4, si));
+
+        // Knots: scattered dark spots
+        const knotChance = pxHash(px, py, 13, 17);
+        if (knotChance > 0.92 && Math.abs(dx) < halfW - 1) si = 5;
+
+        const col = bark[si];
+        const jitter = Math.round((pxHash(px + 5, py + 3, 9, 11) - 0.5) * 8);
+        const idx = (py * w + px) * 4;
+        d[idx]   = clampByte(col[0] + jitter);
+        d[idx+1] = clampByte(col[1] + jitter);
+        d[idx+2] = clampByte(col[2] + jitter);
+        d[idx+3] = 255;
+      }
+
+      // Branch stubs on left/right side of trunk at certain heights
+      if (py === 4 || py === 5) {
+        // Left branch stub
+        for (let bx = 0; bx < 3; bx++) {
+          const bpx = Math.floor(cx - halfW - bx - 1);
+          if (bpx < 0) continue;
+          const idx = (py * w + bpx) * 4;
+          const col = bark[py === 4 ? 3 : 2];
+          d[idx] = col[0]; d[idx+1] = col[1]; d[idx+2] = col[2]; d[idx+3] = 255;
+        }
+      }
+      if (py === 10 || py === 11) {
+        // Right branch stub
+        for (let bx = 0; bx < 3; bx++) {
+          const bpx = Math.floor(cx + halfW + bx + 1);
+          if (bpx >= w) continue;
+          const idx = (py * w + bpx) * 4;
+          const col = bark[py === 10 ? 3 : 2];
+          d[idx] = col[0]; d[idx+1] = col[1]; d[idx+2] = col[2]; d[idx+3] = 255;
+        }
+      }
+    }
+
+    // Root tendrils at very bottom
+    const rootY = h - 2;
+    for (let ry = rootY; ry < h; ry++) {
+      for (let rx = -9; rx <= 9; rx++) {
+        const rpx = Math.floor(cx + rx);
+        if (rpx < 0 || rpx >= w) continue;
+        if (pxHash(rpx, ry, 5, 3) > 0.55) continue;
+        const idx = (ry * w + rpx) * 4;
+        if (d[idx + 3] > 0) continue; // already drawn
+        const col = bark[1];
+        d[idx] = col[0]; d[idx+1] = col[1]; d[idx+2] = col[2]; d[idx+3] = 255;
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
   }
 
   function _drawCanopy(ctx) {
@@ -707,40 +781,79 @@ const World = (() => {
 
     const imgData = ctx.createImageData(w, h);
     const d = imgData.data;
-    const cx = w / 2;
-    const cy = h * 0.45;
-    const rx = w * 0.46;
-    const ry = h * 0.44;
 
+    // Leaf colour palette: deep shadow → bright highlight
     const shades = [
-      [20, 50, 18],   // deep shadow
-      [30, 75, 26],   // dark green
-      [45, 110, 38],  // mid green
-      [65, 145, 50],  // bright green
-      [85, 175, 65],  // light green
-      [110, 195, 80], // highlight
+      [16, 38, 12],    // deepest shadow
+      [24, 56, 20],    // dark green
+      [34, 78, 28],    // shadow green
+      [48, 105, 36],   // mid dark
+      [62, 130, 44],   // mid green
+      [78, 155, 54],   // bright green
+      [96, 178, 66],   // light green
+      [118, 198, 82],  // highlight
+    ];
+
+    // Multiple overlapping leaf clusters to create organic shape
+    const clusters = [
+      { x: w * 0.5,  y: h * 0.32, rx: w * 0.44, ry: h * 0.30 },  // main top mass
+      { x: w * 0.32, y: h * 0.48, rx: w * 0.30, ry: h * 0.28 },  // left lobe
+      { x: w * 0.68, y: h * 0.46, rx: w * 0.30, ry: h * 0.26 },  // right lobe
+      { x: w * 0.44, y: h * 0.60, rx: w * 0.26, ry: h * 0.22 },  // lower left
+      { x: w * 0.58, y: h * 0.62, rx: w * 0.24, ry: h * 0.20 },  // lower right
+      { x: w * 0.50, y: h * 0.22, rx: w * 0.28, ry: h * 0.20 },  // crown top
+      { x: w * 0.38, y: h * 0.36, rx: w * 0.22, ry: h * 0.18 },  // upper left detail
+      { x: w * 0.62, y: h * 0.34, rx: w * 0.20, ry: h * 0.16 },  // upper right detail
     ];
 
     for (let py = 0; py < h; py++) {
       for (let px = 0; px < w; px++) {
-        const dx = (px - cx) / rx;
-        const dy = (py - cy) / ry;
-        const dist = dx * dx + dy * dy;
+        // Check if pixel is inside any leaf cluster
+        let minDist = 999;
+        let insideAny = false;
 
-        // Jagged organic edge
-        const edgeNoise = (pxHash(px, py, 7, 3) - 0.5) * 0.3;
-        if (dist > 1.0 + edgeNoise) continue;
+        for (let ci = 0; ci < clusters.length; ci++) {
+          const cl = clusters[ci];
+          const dx = (px - cl.x) / cl.rx;
+          const dy = (py - cl.y) / cl.ry;
+          const dist = dx * dx + dy * dy;
 
-        // Shading: light from top-left
-        const lightFrac = (-dx * 0.3 - dy * 0.5 + 0.5);
-        const noiseFrac = pxHash(px, py, 11, 5) * 0.3;
-        const shade = lightFrac * 0.6 + noiseFrac + (1 - dist) * 0.2;
+          // Jagged edge per cluster
+          const edgeNoise = (pxHash(px + ci * 7, py + ci * 13, 7 + ci, 3) - 0.5) * 0.35;
+          if (dist < 1.0 + edgeNoise) {
+            insideAny = true;
+            if (dist < minDist) minDist = dist;
+          }
+        }
 
-        let si = Math.floor(shade * 5);
-        si = Math.max(0, Math.min(5, si));
+        if (!insideAny) continue;
+
+        // --- Leaf detail shading ---
+        // Light from upper-left
+        const globalLx = (px / w - 0.3);
+        const globalLy = (py / h - 0.2);
+        const lightFrac = 1.0 - (globalLx * 0.4 + globalLy * 0.6);
+
+        // Per-pixel leaf clump noise (creates leafy texture)
+        const leafNoise1 = pxHash(px, py, 11, 5) * 0.35;
+        const leafNoise2 = pxHash(Math.floor(px / 2), Math.floor(py / 2), 3, 9) * 0.25;
+
+        // Depth — inner pixels brighter, edge pixels darker
+        const depthFrac = (1 - minDist) * 0.3;
+
+        // Combine into shade index
+        const shade = lightFrac * 0.45 + leafNoise1 + leafNoise2 + depthFrac;
+        let si = Math.floor(shade * 7);
+        si = Math.max(0, Math.min(7, si));
+
+        // Occasional dark gap pixels (negative space between leaves)
+        const gapChance = pxHash(px, py, 19, 23);
+        if (gapChance > 0.94 && minDist > 0.5) {
+          si = Math.max(0, si - 3);
+        }
+
         const col = shades[si];
-
-        const jitter = Math.round((pxHash(px + 3, py + 7, 5, 9) - 0.5) * 10);
+        const jitter = Math.round((pxHash(px + 3, py + 7, 5, 9) - 0.5) * 8);
         const idx = (py * w + px) * 4;
         d[idx]   = clampByte(col[0] + jitter);
         d[idx+1] = clampByte(col[1] + jitter);
