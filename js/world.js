@@ -92,9 +92,39 @@ const World = (() => {
           else if (n < 0.46) t = T.STONE;
           else if (n < 0.72) t = T.GRASS;
           else if (n < 0.80) t = T.PATH;
-          else               t = T.TREE;
+          else               t = T.GRASS;   // was T.TREE — scatter trees separately
         }
         tileMap[r][c] = t;
+      }
+    }
+
+    // Scatter individual trees on grass tiles (no clusters)
+    // Use a seeded hash to get ~1 tree per 40 tiles, minimum 3 tiles apart
+    const treeCandidates = [];
+    for (let r = 3; r < rows - 3; r++) {
+      for (let c = 3; c < cols - 3; c++) {
+        if (tileMap[r][c] === T.GRASS || tileMap[r][c] === T.FLOWER) {
+          // Pseudo-random per-tile: ~1 in 18 chance
+          const h = Math.sin(c * 127.1 + r * 311.7) * 43758.5453;
+          if ((h - Math.floor(h)) < 0.055) {
+            treeCandidates.push({ c, r });
+          }
+        }
+      }
+    }
+    // Enforce minimum spacing — reject trees too close to an already-placed tree
+    const placed = [];
+    const MIN_DIST = 3;
+    for (const tc of treeCandidates) {
+      let tooClose = false;
+      for (const p of placed) {
+        if (Math.abs(tc.c - p.c) < MIN_DIST && Math.abs(tc.r - p.r) < MIN_DIST) {
+          tooClose = true; break;
+        }
+      }
+      if (!tooClose) {
+        tileMap[tc.r][tc.c] = T.TREE;
+        placed.push(tc);
       }
     }
   }

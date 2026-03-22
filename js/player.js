@@ -76,7 +76,7 @@ const Player = (() => {
     const row  = Math.floor(ny / World.TILE_H);
     const tile = World.tileAt(col, row);
 
-    if (tile !== World.T.WATER && tile !== undefined) { x = nx; y = ny; }
+    if (tile !== World.T.WATER && tile !== World.T.TREE && tile !== undefined) { x = nx; y = ny; }
 
     if (vx !== 0 || vy !== 0) {
       frameTimer += dt;
