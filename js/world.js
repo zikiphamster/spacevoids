@@ -9,10 +9,10 @@ const World = (() => {
   const TILE_W = 16;
   const TILE_H = 16;
 
-  const TRUNK_W = 24;
-  const TRUNK_H = 28;
-  const CANOPY_W = 44;
-  const CANOPY_H = 44;
+  const TRUNK_W = 28;
+  const TRUNK_H = 32;
+  const CANOPY_W = 50;
+  const CANOPY_H = 50;
   let treeCanopies = [];  // { mesh, worldY } for depth sorting
   let treeColliders = []; // { x, y, hw, hh } — bottom-half trunk hitboxes in world coords
   let canopyMaterial = null;
@@ -663,7 +663,7 @@ const World = (() => {
       cMat.uniforms.uTime.value = gameTime;
 
       // Use player's feet Y for depth comparison (player center + half height)
-      const playerFeetY = playerY + 7; // SIZE_H/2 = 7
+      const playerFeetY = playerY + 12; // SIZE_H/2 ≈ 12
       const treeX = tc.col * TILE_W + TILE_W / 2;
       const dx = Math.abs(playerX - treeX);
 

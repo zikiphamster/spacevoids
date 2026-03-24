@@ -61,3 +61,8 @@ Tile images (Green.png, Flower.png, Grassflower.png, Rock.png, Water2.png) are d
 ## Version System
 
 Version displayed in bottom-right of main menu (index.html `#version-label`). Changelog entries in `#changelog-content`. Increment last number (1.0.X) for each update; middle number on user request.
+
+**IMPORTANT**: Always update the version after making changes:
+1. Increment the version number in `#version-label` in index.html
+2. Add a `<p><b>vX.X.X</b> - Description</p>` entry at the top of `#changelog-content` in index.html
+3. Do NOT skip version updates — every meaningful change gets a version bump
